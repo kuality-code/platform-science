@@ -1,6 +1,8 @@
+const munkres = require("munkres-js");
 const { fork } = require("child_process");
 const files = ["./DriverNames.txt", "./StreetAddresses.txt"];
 
+// This function spawns a child process to handle file reading asynchronously
 function handleChildProcess(filePath) {
   return new Promise((resolve, reject) => {
     const child = fork("fileReaderChildProcess.js");
@@ -14,59 +16,61 @@ function handleChildProcess(filePath) {
   });
 }
 
-const calculateSuitabilityScore = (driversInfo, addressesInfo) => {
-  const suitabilityScoreTable = {};
-  addressesInfo.forEach((address) => {
-    let addressName = address.name;
-    let addressSuitability = {};
-    let previousSuitability = 0;
-    let previousDriver = "";
-
-    driversInfo.forEach((driver) => {
-      let driverName = driver.name;
-      let driverSuitability =
-        address.length % 2 == 0
+// This function constructs a cost matrix for the Hungarian algorithm
+// It inverses the suitability score since the algorithm finds the minimum cost
+function calculateCostMatrix(driversInfo, addressesInfo) {
+  return driversInfo.map((driver) =>
+    addressesInfo.map((address) => {
+      let baseSS =
+        address.name.length % 2 === 0
           ? driver.vowelsCount * 1.5
           : driver.consonantsCount;
-
-      address.factors.some((commonFactor) =>
-        driver.factors.includes(commonFactor)
-      ) && (driverSuitability *= 1.5);
-
-      if (driverSuitability > previousSuitability) {
-        previousSuitability = driverSuitability;
-        previousDriver = driverName;
+      let commonFactors = address.factors.some((factor) =>
+        driver.factors.includes(factor)
+      );
+      if (commonFactors) {
+        baseSS *= 1.5;
       }
-    });
+      return -baseSS; // Negate the suitability score for the algorithm
+    })
+  );
+}
 
-    addressSuitability["Driver"] = previousDriver;
-    addressSuitability["Suitability_Score"] = previousSuitability;
-    driversInfo = driversInfo.filter((driver) => driver.name != previousDriver);
-
-    suitabilityScoreTable[addressName] = addressSuitability;
-  });
-
-  return suitabilityScoreTable;
-};
-
+// Main execution function
 (async () => {
   try {
+    // Read and process driver and address data concurrently
     const [drivers, addresses] = await Promise.all([
       handleChildProcess(files[0]),
       handleChildProcess(files[1]),
     ]);
 
-    const suitabilityScoreTable = calculateSuitabilityScore(
+    // Generate the cost matrix based on driver and address info
+    const costMatrix = calculateCostMatrix(
       drivers.dataArray,
       addresses.dataArray
     );
 
+    // Use the Hungarian algorithm to find the optimal assignments
+    const results = munkres(costMatrix);
+
+    let totalSuitabilityScore = 0;
     console.log(
       "\nThe best drivers for each address and their respective Suitability Scores are mentioned below:\n"
     );
-    console.table(suitabilityScoreTable);
+
+    // Prepare and output the data without index and in plain format
+    results.forEach(([driverIndex, addressIndex]) => {
+      const score = -costMatrix[driverIndex][addressIndex]; // Convert back to a positive score
+      totalSuitabilityScore += score;
+
+      // Output each assignment on a new line
+      console.log(`Address: ${addresses.dataArray[addressIndex].name}`);
+      console.log(`Driver: ${drivers.dataArray[driverIndex].name}`);
+      console.log(`Suitability Score: ${score}`); // Output as a number
+      console.log(); // Blank line for separation
+    });
   } catch (error) {
     console.error("An error occurred in one of the child processes:", error);
-    return error;
   }
 })();
